@@ -1,0 +1,78 @@
+# This is a basic workflow to help you get started with Actions
+
+name: pyside2_arm64_build
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  schedule:
+    - cron: "0 0 * * MON"
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: arm64-build
+  cancel-in-progress: true
+
+jobs:
+  armv7_job:
+    # The host should always be Linux
+    runs-on: self-hosted
+    name: Build on ubuntu-18.04 aarch64
+    steps:
+      - uses: uraimo/run-on-arch-action@v2
+        name: Build artifact
+        id: build
+        with:
+          arch: aarch64
+          distro: ubuntu18.04
+
+          # Not required, but speeds up builds by storing container images in
+          # a GitHub package registry.
+          githubToken: ${{ github.token }}
+
+          # Create an artifacts directory
+          setup: |
+            mkdir -p "${PWD}/artifacts"
+
+          # Mount the artifacts directory as /artifacts in the container
+          dockerRunArgs: |
+            --volume "${PWD}/artifacts:/artifacts"
+
+          install: |
+            apt update -q -y
+            apt-get install -q -y build-essential cmake python3 git libclang-dev qt5-default qtscript5-dev libssl-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev libqt5svg5-dev libqt5webkit5-dev libsdl2-dev libasound2 libxmu-dev libxi-dev freeglut3-dev libasound2-dev libjack-jackd2-dev libxrandr-dev libqt5xmlpatterns5-dev libqt5xmlpatterns5 libqt5xmlpatterns5-dev qtdeclarative5-private-dev qtbase5-private-dev qttools5-private-dev qtwebengine5-private-dev libclang-9-dev
+            apt-get install gcc libpq-dev -y
+            apt-get install python3-dev python3-pip python3-venv python3-wheel -y
+            pip3 install wheel
+
+          # Set an output parameter `uname` for use in subsequent steps
+          run: |
+            cd ~
+            git clone git://code.qt.io/pyside/pyside-setup.git
+            cd pyside-setup
+            qmake --version
+            git checkout 5.9
+            sed -i -- "s/\${QtGui_GEN_DIR}\/qopengltimemonitor_wrapper.cpp/#\${QtGui_GEN_DIR}\/qopengltimemonitor_wrapper.cpp/g" ~/pyside-setup/sources/pyside2/PySide2/QtGui/CMakeLists.txt
+            sed -i -- "s/\${QtGui_GEN_DIR}\/qopengltimerquery_wrapper.cpp/#\${QtGui_GEN_DIR}\/qopengltimerquery_wrapper.cpp/g" ~/pyside-setup/sources/pyside2/PySide2/QtGui/CMakeLists.txt
+            export LLVM_INSTALL_DIR=/usr/lib/llvm-9/
+            mv /usr/bin/make /usr/bin/make.bak
+            printf '#!/bin/bash\nmake.bak --jobs=14 $@' >> /usr/bin/make
+            chmod a+x /usr/bin/make
+            python3 setup.py build
+            python3 setup.py --only-package bdist_wheel
+            rm -r /artifacts/* || true
+            cp dist/*.whl *.whl /artifacts/ || true
+      - name: Get the output
+        run: |
+          ls -al "${PWD}/artifacts"
+      - uses: actions/upload-artifact@v3
+        with:
+          name: pyside2-arm64
+          path: artifacts/*.whl
